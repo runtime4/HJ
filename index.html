@@ -63,8 +63,8 @@
             for (let i = 1; i <= numPanels; i++) {
                 const panelNum = String(i).padStart(3, '0');
                 const img = document.createElement('img');
-                // Updated to match the new folder structure: episodes/{episode_no}/{panel_number_3_digits}.png
-                img.src = `episodes/${currentEp}/${panelNum}.png`;
+                // Updated to match the new folder structure: episodes/{episode_no}/{panel_number_3_digits}.webp
+                img.src = `episodes/${currentEp}/${panelNum}.webp`;
                 img.loading = "lazy";
                 document.getElementById('comic-container').appendChild(img);
             }
