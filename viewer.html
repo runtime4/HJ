@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Jumper</title>
+    <style>
+        body, html { 
+            margin: 0; 
+            padding: 0; 
+            background-color: #000; /* Pure black for cinema feel */
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            width: 100%;
+        }
+        img { 
+            width: 100%; 
+            max-width: 100%; 
+            height: auto; 
+            display: block; 
+            vertical-align: top; 
+            margin: 0; 
+            padding: 0; 
+            border: none;
+        }
+        .comic-container { 
+            display: flex; 
+            flex-direction: column; 
+            width: 100%; 
+        }
+        #loading { 
+            color: #333; /* Very dim loading text so it doesn't distract */
+            padding: 50px; 
+            font-size: 16px; 
+            font-family: sans-serif;
+            text-align: center;
+        }
+        /* Hide scrollbar for the ultimate clean look (optional, webkit only) */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
+        }
+    </style>
+    <script src="data.js"></script>
+</head>
+<body>
+    <div class="comic-container" id="comic-container">
+        <div id="loading">Initializing...</div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        let currentEp = parseInt(urlParams.get('ep')) || 1;
+        document.title = `Hand Jumper | Ep. ${currentEp}`;
+
+        if (!comicData[currentEp]) {
+            document.getElementById('comic-container').innerHTML = `<div id="loading">Episode not found.</div>`;
+        } else {
+            document.getElementById('comic-container').innerHTML = ""; 
+            const numPanels = comicData[currentEp];
+
+            for (let i = 1; i <= numPanels; i++) {
+                const panelNum = String(i).padStart(3, '0');
+                const img = document.createElement('img');
+                // Updated to match the new folder structure: episodes/{episode_no}/{panel_number_3_digits}.png
+                img.src = `episodes/${currentEp}/${panelNum}.png`;
+                img.loading = "lazy";
+                document.getElementById('comic-container').appendChild(img);
+            }
+        }
+    </script>
+</body>
+</html>
