@@ -110,7 +110,7 @@ def generate_spa_viewer():
 </body>
 </html>
 """
-    with open("viewer.html", "w", encoding="utf-8") as f:
+    with open("index.html", "w", encoding="utf-8") as f:
         f.write(viewer_content)
 
     # 4. Generate a minimalist Home Index
@@ -132,16 +132,16 @@ def generate_spa_viewer():
     <div class="grid">\n"""
 
     for ep in sorted(ep_data.keys()):
-        index_content += f'        <a href="viewer.html?ep={ep}">{ep}</a>\n'
+        index_content += f'        <a href="index.html?ep={ep}">{ep}</a>\n'
 
     index_content += """    </div>
 </body>
 </html>"""
 
-    with open("index.html", "w", encoding="utf-8") as f:
+    with open("directory.html", "w", encoding="utf-8") as f:
         f.write(index_content)
 
-    print("Done! Open 'index.html' to enter Absolute Cinema.")
+    print("Done! Open 'directory.html' to enter Absolute Cinema.")
 
 if __name__ == "__main__":
     generate_spa_viewer()
