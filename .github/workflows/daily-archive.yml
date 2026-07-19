@@ -42,4 +42,4 @@ jobs:
         with:
           commit_message: "Automated Daily Archive Update"
           branch: main
-          file_pattern: 'episodes/* data.js index.html directory.html'
+          file_pattern: 'episodes/** data.js index.html directory.html'

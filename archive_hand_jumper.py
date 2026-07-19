@@ -3,12 +3,15 @@ Hand Jumper Webtoon Archiver
 ============================
 Downloads all free episodes of Hand Jumper (title_no=2702) from Webtoons,
 extracts the panel images from each episode, and saves each panel as a
-separate maximum-quality PNG file.
+high-quality WebP file (quality 92).
 
 Architecture (two-phase pipeline for maximum throughput):
     Phase 1 — Fetch all episode viewer pages concurrently, extract panel URLs.
     Phase 2 — Download ALL panels concurrently across ALL episodes.
     Phase 3 — Retry any failures with exponential backoff.
+
+New episodes are auto-discovered: the archiver probes beyond the last known
+episode until it hits consecutive 404s, so no manual update is ever needed.
 
 Usage:
     python archive_hand_jumper.py
@@ -17,8 +20,8 @@ Requirements:
     pip install requests beautifulsoup4 pillow
 
 Output:
-    episodes/{episode_no}/{panel_number_3_digits}.png
-    e.g. episodes/24/007.png
+    episodes/{episode_no}/{panel_number_3_digits}.webp
+    e.g. episodes/24/007.webp
 """
 
 import io
@@ -32,7 +35,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, PngImagePlugin
+from PIL import Image
 from requests.adapters import HTTPAdapter
 
 Image.MAX_IMAGE_PIXELS = None  # Disable decompression bomb limit
@@ -42,7 +45,7 @@ Image.MAX_IMAGE_PIXELS = None  # Disable decompression bomb limit
 # ---------------------------------------------------------------------------
 
 TITLE_NO = 2702
-TOTAL_EPISODES = 126  # episodes 1-126
+MAX_CONSECUTIVE_MISSES = 3  # stop probing after this many 404s in a row
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "episodes")
 
 VIEWER_URL = (
@@ -240,14 +243,60 @@ def _extract_episode_tasks(episode_no):
         return []
 
 
+def _discover_total_episodes():
+    """
+    Auto-discover the total number of available episodes by probing.
+    Starts from the number of existing episode folders on disk (so nightly
+    runs only probe a few new episodes instead of re-checking all 126+),
+    then probes forward until MAX_CONSECUTIVE_MISSES consecutive misses.
+    """
+    # Count existing episode folders to avoid re-probing from 1 every time
+    known = 0
+    if os.path.isdir(OUTPUT_DIR):
+        known = len([
+            d for d in os.listdir(OUTPUT_DIR)
+            if os.path.isdir(os.path.join(OUTPUT_DIR, d)) and d.isdigit()
+        ])
+
+    start = max(1, known)  # start at last known (or 1 if empty)
+    log.info(
+        "Discovering episodes (known on disk: %d, probing from ep %d)...",
+        known, start,
+    )
+    ep = start
+    consecutive_misses = 0
+    last_valid = known  # assume all existing folders are valid
+
+    while consecutive_misses < MAX_CONSECUTIVE_MISSES:
+        try:
+            page_url = VIEWER_URL.format(title_no=TITLE_NO, episode_no=ep)
+            resp = _get_session().get(page_url, headers=HEADERS, timeout=15)
+            if resp.status_code == 200 and "_imageList" in resp.text:
+                last_valid = ep
+                consecutive_misses = 0
+            else:
+                consecutive_misses += 1
+        except requests.RequestException:
+            consecutive_misses += 1
+        ep += 1
+
+    log.info("Discovered %d total episodes.", last_valid)
+    return last_valid
+
+
 def fetch_all_episode_tasks():
     """
     Phase 1: Concurrently fetch all episode viewer pages and return the
     complete flat list of panel download tasks.
     """
+    total_episodes = _discover_total_episodes()
+    if total_episodes == 0:
+        log.error("Could not discover any episodes.")
+        return [], []
+
     log.info(
         "PHASE 1 ▸ Fetching %d episode pages (%d concurrent) ...",
-        TOTAL_EPISODES, CONCURRENT_PAGES,
+        total_episodes, CONCURRENT_PAGES,
     )
     t0 = time.monotonic()
 
@@ -257,7 +306,7 @@ def fetch_all_episode_tasks():
     with ThreadPoolExecutor(max_workers=CONCURRENT_PAGES) as pool:
         future_to_ep = {
             pool.submit(_extract_episode_tasks, ep): ep
-            for ep in range(1, TOTAL_EPISODES + 1)
+            for ep in range(1, total_episodes + 1)
         }
         for future in as_completed(future_to_ep):
             ep = future_to_ep[future]
@@ -275,7 +324,7 @@ def fetch_all_episode_tasks():
     log.info(
         "PHASE 1 ▸ Done in %.1fs — %d panels across %d episodes (%d episodes failed).",
         elapsed, len(all_tasks),
-        TOTAL_EPISODES - len(failed_episodes), len(failed_episodes),
+        total_episodes - len(failed_episodes), len(failed_episodes),
     )
     return all_tasks, sorted(failed_episodes)
 
@@ -321,9 +370,6 @@ def _download_and_save_panel(task, progress=None):
         ):
             img = img.convert("RGBA")
         else:
-            img = img.convert("RGB")
-            
-        if img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGB")
 
         # Capture dimensions before close
@@ -458,9 +504,9 @@ def main():
     log.info("  Hand Jumper Archiver — MAXIMUM QUALITY & SPEED")
     log.info("=" * 60)
     log.info("Title:       Hand Jumper (title_no=%d)", TITLE_NO)
-    log.info("Episodes:    1–%d", TOTAL_EPISODES)
+    log.info("Episodes:    auto-discovery (probe beyond known count)")
     log.info("Output:      %s", OUTPUT_DIR)
-    log.info("Quality:     Lossless PNG, no CDN compression, original resolution")
+    log.info("Quality:     WebP q92, no CDN compression, original resolution")
     log.info("Concurrency: %d page fetches, %d panel downloads",
              CONCURRENT_PAGES, CONCURRENT_PANELS)
     log.info("-" * 60)

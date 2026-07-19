@@ -34,7 +34,7 @@ def generate_spa_viewer():
         f.write(f"const comicData = {json.dumps(ep_data)};\n")
         f.write(f"const totalEpisodes = {total_episodes};\n")
 
-    # 3. Create the minimalist viewer.html template (Absolute Cinema)
+    # 3. Create the minimalist index.html viewer (Absolute Cinema)
     viewer_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,6 +65,9 @@ def generate_spa_viewer():
             display: flex; 
             flex-direction: column; 
             width: 100%; 
+            line-height: 0;
+            font-size: 0;
+            gap: 0;
         }
         #loading { 
             color: #333; /* Very dim loading text so it doesn't distract */
@@ -119,6 +122,7 @@ def generate_spa_viewer():
 <head>
     <meta charset="UTF-8">
     <title>Hand Jumper Archive</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { background: #000; color: #555; font-family: sans-serif; text-align: center; padding: 40px; }
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 10px; max-width: 800px; margin: 40px auto; }
