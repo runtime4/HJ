@@ -31,8 +31,6 @@ jobs:
       - name: Run Webtoon scraper
         run: python archive_hand_jumper.py
 
-      - name: Convert new images to WEBP
-        run: python convert_to_webp.py
 
       - name: Generate static pages & index
         run: python pages.py

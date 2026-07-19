@@ -25,8 +25,10 @@ Output:
 """
 
 import io
+import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -284,6 +286,27 @@ def _discover_total_episodes():
     return last_valid
 
 
+def _load_known_completion():
+    """
+    Reads data.js to find how many panels each episode is supposed to have.
+    Returns a dict mapping episode_no (int) -> expected_panels (int).
+    """
+    data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.js")
+    if not os.path.exists(data_path):
+        return {}
+    try:
+        with open(data_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # Extract the JSON object from `const comicData = {...};`
+        match = re.search(r'const comicData\s*=\s*({.*?});', content, re.DOTALL)
+        if match:
+            data = json.loads(match.group(1))
+            return {int(k): int(v) for k, v in data.items()}
+    except Exception as e:
+        log.warning("Could not parse data.js for known panel counts: %s", e)
+    return {}
+
+
 def fetch_all_episode_tasks():
     """
     Phase 1: Concurrently fetch all episode viewer pages and return the
@@ -295,18 +318,33 @@ def fetch_all_episode_tasks():
         return [], []
 
     log.info(
-        "PHASE 1 ▸ Fetching %d episode pages (%d concurrent) ...",
-        total_episodes, CONCURRENT_PAGES,
+        "PHASE 1 ▸ Checking %d episodes ...",
+        total_episodes,
     )
     t0 = time.monotonic()
 
     all_tasks = []
     failed_episodes = []
+    known_counts = _load_known_completion()
+    episodes_to_fetch = []
+
+    for ep in range(1, total_episodes + 1):
+        ep_dir = os.path.join(OUTPUT_DIR, str(ep))
+        expected = known_counts.get(ep, -1)
+        # If the directory exists, count valid webp files
+        if expected > 0 and os.path.isdir(ep_dir):
+            actual = len([f for f in os.listdir(ep_dir) if f.endswith(".webp") and os.path.getsize(os.path.join(ep_dir, f)) > 0])
+            if actual == expected:
+                log.debug("Ep %03d: completely downloaded (%d panels). Skipping HTML fetch.", ep, actual)
+                continue
+        episodes_to_fetch.append(ep)
+
+    log.info("Need to fetch HTML for %d incomplete/new episodes.", len(episodes_to_fetch))
 
     with ThreadPoolExecutor(max_workers=CONCURRENT_PAGES) as pool:
         future_to_ep = {
             pool.submit(_extract_episode_tasks, ep): ep
-            for ep in range(1, total_episodes + 1)
+            for ep in episodes_to_fetch
         }
         for future in as_completed(future_to_ep):
             ep = future_to_ep[future]
