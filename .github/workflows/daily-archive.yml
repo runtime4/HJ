@@ -3,7 +3,7 @@ name: Daily Hand Jumper Archiver
 on:
   schedule:
     # Runs at 00:00 UTC every day
-    - cron: '0 0 * * *'
+    - cron: '0 22 * * *'
   workflow_dispatch: # Allows you to run it manually from the Actions tab
 
 jobs:
