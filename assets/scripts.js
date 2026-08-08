@@ -21,8 +21,13 @@ class EpisodeFormatError extends Error {
 }
 
 const query = new URLSearchParams(location.search);
-const requestedEpisode = Number.parseInt(query.get("ep") || "1", 10);
-const episodeNumber =
+const epParam = query.get("ep");
+const isLatestRequested = epParam === "latest";
+const requestedEpisode = Number.parseInt(epParam || "1", 10);
+// When "latest" is requested this starts as a placeholder; initializeViewer()
+// resolves it to the real newest episode number before it's used for any
+// fetch or image path, so nothing downstream needs to know about "latest".
+let episodeNumber =
   Number.isInteger(requestedEpisode) && requestedEpisode > 0
     ? requestedEpisode
     : 1;
@@ -70,8 +75,8 @@ function updateScale() {
   // appear with transform: scale(), which composites images out-of-flow and
   // rounds each panel boundary independently. reader.style.height also no
   // longer needs a manual override — zoom drives the layout height directly.
-  strip.style.zoom = scale < 1 ? scale : '';
-  reader.style.height = '';
+  strip.style.zoom = scale < 1 ? scale : "";
+  reader.style.height = "";
 }
 
 function setViewerState(title, detail, { canRetry = false } = {}) {
@@ -575,6 +580,19 @@ async function fetchMapFile(mapPath) {
   }
 }
 
+function resolveLatestEpisodeNumber(manifest) {
+  // archive.py writes totalEpisodes as the authoritative episode count/number
+  // in map/manifest.json — trust it directly instead of re-deriving it.
+  if (
+    !manifest ||
+    !Number.isInteger(manifest.totalEpisodes) ||
+    manifest.totalEpisodes <= 0
+  ) {
+    return null;
+  }
+  return manifest.totalEpisodes;
+}
+
 function attachViewerEvents() {
   window.addEventListener("resize", handleResize, { passive: true });
   window.addEventListener("scroll", handleScroll, { passive: true });
@@ -591,10 +609,31 @@ function attachViewerEvents() {
 
 async function initializeViewer() {
   setViewerState("Opening episode", "Preparing the panels for you.");
-  const manifestRequest = fetchMapFile("map/manifest.json").catch((error) => {
-    console.warn("Episode navigation is unavailable:", error);
-    return null;
-  });
+
+  let manifest = null;
+  if (isLatestRequested) {
+    try {
+      manifest = await fetchMapFile("map/manifest.json");
+      const latestEpisode = resolveLatestEpisodeNumber(manifest);
+      if (latestEpisode === null) {
+        throw new ArchiveRequestError(
+          "Archive manifest has no episodes listed",
+        );
+      }
+      episodeNumber = latestEpisode;
+    } catch (error) {
+      console.error(error);
+      showViewerError(error);
+      return;
+    }
+  }
+
+  const manifestRequest = manifest
+    ? Promise.resolve(manifest)
+    : fetchMapFile("map/manifest.json").catch((error) => {
+        console.warn("Episode navigation is unavailable:", error);
+        return null;
+      });
 
   try {
     const metadata = await fetchMapFile(`map/${episodeNumber}.json`);
@@ -615,8 +654,8 @@ async function initializeViewer() {
     }
     dismissViewerState();
 
-    const manifest = await manifestRequest;
-    configureEpisodeEnd(manifest, metadata);
+    const resolvedManifest = await manifestRequest;
+    configureEpisodeEnd(resolvedManifest, metadata);
   } catch (error) {
     console.error(error);
     showViewerError(error);
