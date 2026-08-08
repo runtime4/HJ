@@ -1,0 +1,138 @@
+name: Update archive
+
+on:
+  schedule:
+    # Sleepy's observed UTC upload time plus five minutes.
+    - cron: "5 0 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: archive-update
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: pip
+          cache-dependency-path: build/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --requirement build/requirements.txt
+
+      - name: Update archive
+        id: update
+        continue-on-error: true
+        run: python build/archive.py
+
+      - name: Commit generated output
+        run: |
+          set -euo pipefail
+
+          git config user.name "runtime4"
+          git config user.email "226877556+runtime4@users.noreply.github.com"
+
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+
+          is_valid_json() {
+            python -m json.tool "$1" > /dev/null 2>&1
+          }
+
+          # Retries a push if the remote moved (e.g. something else committed
+          # to the branch during this run) by rebasing on top and trying again.
+          push_with_retry() {
+            local attempt=1
+            local max_attempts=5
+            until git push; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::git push failed after $max_attempts attempts"
+                return 1
+              fi
+              echo "Push rejected (attempt $attempt/$max_attempts) — fetching and rebasing before retry..."
+              git fetch origin "$branch"
+              git rebase "origin/$branch"
+              attempt=$((attempt + 1))
+              sleep $((attempt * 5))
+            done
+          }
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Archive is already up to date."
+            exit 0
+          fi
+
+          # Commit & push episode by episode (~35-45 MB per commit, well within
+          # GitHub's safe 50 MB HTTP push limit). An episode is only committed
+          # once it has a matching, well-formed map/<ep>.json. An episode
+          # directory with no valid map entry means archive.py didn't finish
+          # writing it, so it's deliberately left uncommitted for the next
+          # run to pick back up, rather than swept into the final commit below.
+          for ep_dir in episodes/*/; do
+            [ -d "$ep_dir" ] || continue
+            ep="$(basename "$ep_dir")"
+            map_file="map/$ep.json"
+
+            [ -f "$map_file" ] || continue
+            git status --porcelain "$ep_dir" "$map_file" | grep -q . || continue
+
+            if ! is_valid_json "$map_file"; then
+              echo "::warning::Skipping episode $ep — $map_file is not valid JSON, leaving it uncommitted."
+              continue
+            fi
+
+            echo "Committing and pushing episode $ep..."
+            git add "$ep_dir" "$map_file"
+            git commit -m "Archive episode $ep"
+            push_with_retry
+          done
+
+          # Final commit for map/manifest.json and any other remaining files.
+          # Deliberately excludes episodes/ — anything still dirty there is an
+          # incomplete episode that was skipped above and should stay that way.
+          if [ -n "$(git status --porcelain -- . ':!episodes/')" ]; then
+            if [ -f map/manifest.json ] && ! is_valid_json map/manifest.json; then
+              echo "::error::map/manifest.json is not valid JSON; leaving it uncommitted."
+              exit 1
+            fi
+
+            echo "Committing final manifest update..."
+            git add -- . ':!episodes/'
+            git commit -m "Update archive manifest"
+            push_with_retry
+          fi
+
+      - name: Report incomplete archive
+        if: steps.update.outcome == 'failure' || failure()
+        run: |
+          if [ "${{ steps.update.outcome }}" = "failure" ]; then
+            echo "::warning::archive.py exited with an error; any partial progress written before the failure was committed for the next run to continue from."
+          else
+            echo "::warning::The commit/push step failed; progress written by archive.py may not have been committed — check the logs above."
+          fi
+          exit 1
+
+      - name: Open or update issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          existing="$(gh issue list --state open --search "\"Archive update failed\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Failed again: $run_url"
+          else
+            gh issue create --title "Archive update failed" --body "The scheduled archive update failed: $run_url"
+          fi
